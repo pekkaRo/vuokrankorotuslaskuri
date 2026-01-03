@@ -20,7 +20,8 @@ const indexData = {
     2020: 1974,
     2021: 2017,
     2022: 2161,
-    2023: 2296
+    2023: 2296,
+    2024: 2333
 };
 
 
@@ -30,7 +31,7 @@ const indexData = {
 const yearlyChangesObj = [];
 const availableYears = [];
 
-for (let year = 2004; year <= 2023; year++) {
+for (let year = 2004; year <= 2024; year++) {
     const prev = indexData[year - 1];
     const curr = indexData[year];
     const change = ((curr - prev) / prev) * 100;
