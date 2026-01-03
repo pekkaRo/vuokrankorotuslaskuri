@@ -65,8 +65,9 @@ availableYears.forEach(year => {
     endYearSelect.appendChild(optEnd);
 });
 
-// Set defaults
-startYearSelect.value = availableYears[0];
+// Set defaults (Last 5 years)
+const defaultStartYear = availableYears[Math.max(0, availableYears.length - 5)];
+startYearSelect.value = defaultStartYear;
 endYearSelect.value = availableYears[availableYears.length - 1];
 
 simulateBtn.addEventListener('click', runSimulation);
