@@ -23,13 +23,19 @@ const indexData = {
     2023: 2296
 };
 
-// Calculate YoY changes from 2004 to 2023
-const yearlyChanges = [];
+
+
+// Calculate YoY changes with year info
+// yearlyChangesObj = [ {year: 2004, change: 0.95}, ... ]
+const yearlyChangesObj = [];
+const availableYears = [];
+
 for (let year = 2004; year <= 2023; year++) {
     const prev = indexData[year - 1];
     const curr = indexData[year];
     const change = ((curr - prev) / prev) * 100;
-    yearlyChanges.push(change);
+    yearlyChangesObj.push({ year, change });
+    availableYears.push(year);
 }
 
 // Chart instance
@@ -38,37 +44,77 @@ let chart = null;
 // DOM Elements
 const simulateBtn = document.getElementById('simulateBtn');
 const initialRentInput = document.getElementById('initialRent');
+const waterFeeInput = document.getElementById('waterFee');
 const minHikeInput = document.getElementById('minHike');
 const maxHikeInput = document.getElementById('maxHike');
 const fixedAdditionInput = document.getElementById('fixedAddition');
+const startYearSelect = document.getElementById('startYear');
+const endYearSelect = document.getElementById('endYear');
 const statsOutput = document.getElementById('statsOutput');
+
+// Populate Year Selects
+availableYears.forEach(year => {
+    const optStart = document.createElement('option');
+    optStart.value = year;
+    optStart.textContent = year;
+    startYearSelect.appendChild(optStart);
+
+    const optEnd = document.createElement('option');
+    optEnd.value = year;
+    optEnd.textContent = year;
+    endYearSelect.appendChild(optEnd);
+});
+
+// Set defaults
+startYearSelect.value = availableYears[0];
+endYearSelect.value = availableYears[availableYears.length - 1];
 
 simulateBtn.addEventListener('click', runSimulation);
 
 function runSimulation() {
     const initialRent = parseFloat(initialRentInput.value);
+    const waterFee = parseFloat(waterFeeInput.value) || 0;
     const minHike = parseFloat(minHikeInput.value);
     const maxHike = parseFloat(maxHikeInput.value);
     const fixedAddition = parseFloat(fixedAdditionInput.value);
+    
+    // Get filter years
+    const startYear = parseInt(startYearSelect.value);
+    const endYear = parseInt(endYearSelect.value);
+
+    // Filter historical data
+    // Ensure start <= end. If not, swap or handle gracefully.
+    const effectiveStart = Math.min(startYear, endYear);
+    const effectiveEnd = Math.max(startYear, endYear);
+
+    const filteredChanges = yearlyChangesObj
+        .filter(item => item.year >= effectiveStart && item.year <= effectiveEnd)
+        .map(item => item.change);
+        
+    if (filteredChanges.length === 0) {
+        alert("Valitulla aikavälillä ei ole dataa!");
+        return;
+    }
 
     const simulationYears = 5;
     const numSimulations = 2000;
     
     // Store results for each year across all simulations
-    // results[yearIndex] = [rent_sim_1, rent_sim_2, ...]
+    // results[yearIndex] = [total_cost_sim_1, total_cost_sim_2, ...]
     const results = Array.from({ length: simulationYears + 1 }, () => []);
     
-    // Initialize year 0
+    // Initialize year 0 (Base Rent + Water Fee)
+    const initialTotal = initialRent + waterFee;
     for (let i = 0; i < numSimulations; i++) {
-        results[0].push(initialRent);
+        results[0].push(initialTotal);
     }
 
     // Run simulations
     for (let sim = 0; sim < numSimulations; sim++) {
         let currentRent = initialRent;
         for (let year = 1; year <= simulationYears; year++) {
-            // Bootstrapping: pick a random historical change
-            const randomChange = yearlyChanges[Math.floor(Math.random() * yearlyChanges.length)];
+            // Bootstrapping: pick a random historical change from FILTERED list
+            const randomChange = filteredChanges[Math.floor(Math.random() * filteredChanges.length)];
             
             // Calculate effective hike
             let hike = randomChange + fixedAddition;
@@ -78,7 +124,9 @@ function runSimulation() {
             
             // Apply rent increase
             currentRent = currentRent * (1 + hike / 100);
-            results[year].push(currentRent);
+            
+            // Result is Rent + Constant Water Fee
+            results[year].push(currentRent + waterFee);
         }
     }
 
@@ -96,7 +144,7 @@ function runSimulation() {
     }
 
     updateChart(years, medianData, p10Data, p90Data);
-    updateStats(initialRent, medianData[simulationYears], p10Data[simulationYears], p90Data[simulationYears]);
+    updateStats(initialTotal, medianData[simulationYears], p10Data[simulationYears], p90Data[simulationYears]);
 }
 
 function updateChart(labels, median, p10, p90) {
@@ -151,8 +199,8 @@ function updateChart(labels, median, p10, p90) {
             plugins: {
                 title: {
                     display: true,
-                    text: 'Vuokran kehitysennuste (5 vuotta)',
-                    color: '#e2e8f0',
+                    text: 'Arvioitu kuukausimaksu (Vuokra + Vesi)',
+                    color: '#1e293b',
                     font: {
                         size: 16,
                         family: 'Outfit'
@@ -160,7 +208,7 @@ function updateChart(labels, median, p10, p90) {
                 },
                 legend: {
                     labels: {
-                        color: '#cbd5e1',
+                        color: '#475569',
                         font: { family: 'Outfit' }
                     }
                 },
@@ -185,12 +233,12 @@ function updateChart(labels, median, p10, p90) {
             scales: {
                 x: {
                     grid: { color: 'rgba(148, 163, 184, 0.1)' },
-                    ticks: { color: '#94a3b8', font: { family: 'Outfit' } }
+                    ticks: { color: '#64748b', font: { family: 'Outfit' } }
                 },
                 y: {
                     grid: { color: 'rgba(148, 163, 184, 0.1)' },
                     ticks: { 
-                        color: '#94a3b8',
+                        color: '#64748b',
                         font: { family: 'Outfit' },
                         callback: function(value) {
                             return value + ' €'; 
@@ -208,7 +256,7 @@ function updateStats(start, endMedian, endLow, endHigh) {
     
     statsOutput.innerHTML = `
         <div class="stat-card">
-            <h3>Odotettu vuokra 5v kuluttua</h3>
+            <h3>Odotettu kuukausierä 5v kuluttua</h3>
             <p class="stat-value">${new Intl.NumberFormat('fi-FI', { style: 'currency', currency: 'EUR' }).format(endMedian)}</p>
             <p class="stat-change">+${totalIncreaseP.toFixed(1)}%</p>
         </div>
