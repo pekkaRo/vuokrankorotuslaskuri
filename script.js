@@ -85,6 +85,49 @@ const defaultStartYear = availableYears[Math.max(0, availableYears.length - 5)];
 startYearSelect.value = defaultStartYear;
 endYearSelect.value = availableYears[availableYears.length - 1];
 
+// Workspace Persistence
+function saveWorkspace() {
+    const workspace = {
+        initialRent: initialRentInput.value,
+        waterFee: waterFeeInput.value,
+        minHike: minHikeInput.value,
+        maxHike: maxHikeInput.value,
+        fixedAddition: fixedAdditionInput.value,
+        startYear: startYearSelect.value,
+        endYear: endYearSelect.value
+    };
+    localStorage.setItem('rent_current_workspace', JSON.stringify(workspace));
+}
+
+function restoreWorkspace() {
+    const saved = localStorage.getItem('rent_current_workspace');
+    if (saved) {
+        try {
+            const workspace = JSON.parse(saved);
+            if (workspace.initialRent) initialRentInput.value = workspace.initialRent;
+            if (workspace.waterFee) waterFeeInput.value = workspace.waterFee;
+            if (workspace.minHike) minHikeInput.value = workspace.minHike;
+            if (workspace.maxHike) maxHikeInput.value = workspace.maxHike;
+            if (workspace.fixedAddition) fixedAdditionInput.value = workspace.fixedAddition;
+            if (workspace.startYear) startYearSelect.value = workspace.startYear;
+            if (workspace.endYear) endYearSelect.value = workspace.endYear;
+        } catch (e) {
+            console.error("Failed to restore workspace", e);
+        }
+    }
+}
+
+// Event Listeners for Auto-save
+[initialRentInput, waterFeeInput, minHikeInput, maxHikeInput, fixedAdditionInput, startYearSelect, endYearSelect].forEach(el => {
+    el.addEventListener('input', () => {
+        saveWorkspace();
+        runSimulation();
+    });
+});
+
+// Initial Restore
+restoreWorkspace();
+
 simulateBtn.addEventListener('click', () => runSimulation());
 saveScenarioBtn.addEventListener('click', saveScenario);
 
@@ -145,6 +188,7 @@ function loadScenario(id) {
     fixedAdditionInput.value = config.fixedAddition;
     startYearSelect.value = config.startYear;
     endYearSelect.value = config.endYear;
+    saveWorkspace();
     runSimulation();
 }
 
