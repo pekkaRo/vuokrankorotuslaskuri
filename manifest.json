@@ -1,0 +1,17 @@
+{
+  "name": "Vuokrankorotuslaskuri",
+  "short_name": "Vuokralaskuri",
+  "description": "Simuloi vuokran kehitystä elinkustannusindeksin perusteella",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#f1f5f9",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f4c8.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,3 +1,11 @@
+// Service Worker Registration
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('SW registered', reg))
+            .catch(err => console.log('SW registration failed', err));
+    });
+}
 
 const indexData = {
     2003: 1572,
@@ -25,7 +33,6 @@ const indexData = {
 };
 
 
-
 // Calculate YoY changes with year info
 // yearlyChangesObj = [ {year: 2004, change: 0.95}, ... ]
 const yearlyChangesObj = [];
@@ -42,8 +49,15 @@ for (let year = 2004; year <= 2024; year++) {
 // Chart instance
 let chart = null;
 
+// Scenarios State
+let scenarios = JSON.parse(localStorage.getItem('rent_scenarios') || '{}');
+let comparedScenarioIds = new Set();
+
 // DOM Elements
 const simulateBtn = document.getElementById('simulateBtn');
+const saveScenarioBtn = document.getElementById('saveScenarioBtn');
+const scenarioNameInput = document.getElementById('scenarioName');
+const scenarioList = document.getElementById('scenarioList');
 const initialRentInput = document.getElementById('initialRent');
 const waterFeeInput = document.getElementById('waterFee');
 const minHikeInput = document.getElementById('minHike');
@@ -71,148 +85,229 @@ const defaultStartYear = availableYears[Math.max(0, availableYears.length - 5)];
 startYearSelect.value = defaultStartYear;
 endYearSelect.value = availableYears[availableYears.length - 1];
 
-simulateBtn.addEventListener('click', runSimulation);
+simulateBtn.addEventListener('click', () => runSimulation());
+saveScenarioBtn.addEventListener('click', saveScenario);
 
-function runSimulation() {
-    const initialRent = parseFloat(initialRentInput.value);
-    const waterFee = parseFloat(waterFeeInput.value) || 0;
-    const minHike = parseFloat(minHikeInput.value);
-    const maxHike = parseFloat(maxHikeInput.value);
-    const fixedAddition = parseFloat(fixedAdditionInput.value);
-    
-    // Get filter years
-    const startYear = parseInt(startYearSelect.value);
-    const endYear = parseInt(endYearSelect.value);
+function saveScenario() {
+    const name = scenarioNameInput.value.trim();
+    if (!name) {
+        alert('Anna skenaariolle nimi');
+        return;
+    }
 
-    // Filter historical data
-    // Ensure start <= end. If not, swap or handle gracefully.
-    const effectiveStart = Math.min(startYear, endYear);
-    const effectiveEnd = Math.max(startYear, endYear);
+    const scenarioId = 'scenario_' + Date.now();
+    const config = {
+        id: scenarioId,
+        name: name,
+        initialRent: parseFloat(initialRentInput.value),
+        waterFee: parseFloat(waterFeeInput.value) || 0,
+        minHike: parseFloat(minHikeInput.value),
+        maxHike: parseFloat(maxHikeInput.value),
+        fixedAddition: parseFloat(fixedAdditionInput.value),
+        startYear: parseInt(startYearSelect.value),
+        endYear: parseInt(endYearSelect.value)
+    };
+
+    // Run simulation once to store the median results for comparison
+    const results = simulate(config);
+    config.medianResults = results.median;
+
+    scenarios[scenarioId] = config;
+    localStorage.setItem('rent_scenarios', JSON.stringify(scenarios));
+    scenarioNameInput.value = '';
+    renderScenarios();
+}
+
+function deleteScenario(id) {
+    delete scenarios[id];
+    comparedScenarioIds.delete(id);
+    localStorage.setItem('rent_scenarios', JSON.stringify(scenarios));
+    renderScenarios();
+    runSimulation(); // Refresh chart
+}
+
+function toggleCompare(id) {
+    if (comparedScenarioIds.has(id)) {
+        comparedScenarioIds.delete(id);
+    } else {
+        comparedScenarioIds.add(id);
+    }
+    renderScenarios();
+    runSimulation();
+}
+
+function loadScenario(id) {
+    const config = scenarios[id];
+    initialRentInput.value = config.initialRent;
+    waterFeeInput.value = config.waterFee;
+    minHikeInput.value = config.minHike;
+    maxHikeInput.value = config.maxHike;
+    fixedAdditionInput.value = config.fixedAddition;
+    startYearSelect.value = config.startYear;
+    endYearSelect.value = config.endYear;
+    runSimulation();
+}
+
+function renderScenarios() {
+    scenarioList.innerHTML = '';
+    Object.values(scenarios).forEach(s => {
+        const div = document.createElement('div');
+        div.className = `scenario-item ${comparedScenarioIds.has(s.id) ? 'compared' : ''}`;
+        div.innerHTML = `
+            <span class="scenario-name" onclick="loadScenario('${s.id}')">${s.name}</span>
+            <div class="scenario-actions">
+                <button onclick="toggleCompare('${s.id}')" title="Vertaile">📊</button>
+                <button onclick="deleteScenario('${s.id}')" title="Poista">🗑️</button>
+            </div>
+        `;
+        scenarioList.appendChild(div);
+    });
+}
+
+function simulate(config) {
+    const initialRent = config.initialRent;
+    const waterFee = config.waterFee;
+    const minHike = config.minHike;
+    const maxHike = config.maxHike;
+    const fixedAddition = config.fixedAddition;
+    const effectiveStart = Math.min(config.startYear, config.endYear);
+    const effectiveEnd = Math.max(config.startYear, config.endYear);
 
     const filteredChanges = yearlyChangesObj
         .filter(item => item.year >= effectiveStart && item.year <= effectiveEnd)
         .map(item => item.change);
         
-    if (filteredChanges.length === 0) {
+    if (filteredChanges.length === 0) return null;
+
+    const simulationYears = 5;
+    const numSimulations = 2000;
+    const results = Array.from({ length: simulationYears + 1 }, () => []);
+    const initialTotal = initialRent + waterFee;
+    
+    for (let i = 0; i < numSimulations; i++) {
+        results[0].push(initialTotal);
+    }
+
+    for (let sim = 0; sim < numSimulations; sim++) {
+        let currentRent = initialRent;
+        for (let year = 1; year <= simulationYears; year++) {
+            const randomChange = filteredChanges[Math.floor(Math.random() * filteredChanges.length)];
+            let hike = randomChange + fixedAddition;
+            hike = Math.max(minHike, Math.min(maxHike, hike));
+            currentRent = currentRent * (1 + hike / 100);
+            results[year].push(currentRent + waterFee);
+        }
+    }
+
+    const median = [];
+    const p10 = [];
+    const p90 = [];
+
+    for (let year = 0; year <= simulationYears; year++) {
+        results[year].sort((a, b) => a - b);
+        median.push(results[year][Math.floor(numSimulations * 0.5)]);
+        p10.push(results[year][Math.floor(numSimulations * 0.1)]);
+        p90.push(results[year][Math.floor(numSimulations * 0.9)]);
+    }
+
+    return { median, p10, p90, initialTotal };
+}
+
+function runSimulation() {
+    const config = {
+        initialRent: parseFloat(initialRentInput.value),
+        waterFee: parseFloat(waterFeeInput.value) || 0,
+        minHike: parseFloat(minHikeInput.value),
+        maxHike: parseFloat(maxHikeInput.value),
+        fixedAddition: parseFloat(fixedAdditionInput.value),
+        startYear: parseInt(startYearSelect.value),
+        endYear: parseInt(endYearSelect.value)
+    };
+
+    const simResult = simulate(config);
+    if (!simResult) {
         alert("Valitulla aikavälillä ei ole dataa!");
         return;
     }
 
     const simulationYears = 5;
-    const numSimulations = 2000;
-    
-    // Store results for each year across all simulations
-    // results[yearIndex] = [total_cost_sim_1, total_cost_sim_2, ...]
-    const results = Array.from({ length: simulationYears + 1 }, () => []);
-    
-    // Initialize year 0 (Base Rent + Water Fee)
-    const initialTotal = initialRent + waterFee;
-    for (let i = 0; i < numSimulations; i++) {
-        results[0].push(initialTotal);
-    }
-
-    // Run simulations
-    for (let sim = 0; sim < numSimulations; sim++) {
-        let currentRent = initialRent;
-        for (let year = 1; year <= simulationYears; year++) {
-            // Bootstrapping: pick a random historical change from FILTERED list
-            const randomChange = filteredChanges[Math.floor(Math.random() * filteredChanges.length)];
-            
-            // Calculate effective hike
-            let hike = randomChange + fixedAddition;
-            
-            // Apply constraints
-            hike = Math.max(minHike, Math.min(maxHike, hike));
-            
-            // Apply rent increase
-            currentRent = currentRent * (1 + hike / 100);
-            
-            // Result is Rent + Constant Water Fee
-            results[year].push(currentRent + waterFee);
-        }
-    }
-
-    // Calculate statistics for visualization
     const years = Array.from({length: simulationYears + 1}, (_, i) => `Vuosi ${i}`);
-    const medianData = [];
-    const p10Data = [];
-    const p90Data = [];
-
-    for (let year = 0; year <= simulationYears; year++) {
-        results[year].sort((a, b) => a - b);
-        medianData.push(results[year][Math.floor(numSimulations * 0.5)]);
-        p10Data.push(results[year][Math.floor(numSimulations * 0.1)]);
-        p90Data.push(results[year][Math.floor(numSimulations * 0.9)]);
-    }
-
-    updateChart(years, medianData, p10Data, p90Data);
-    updateStats(initialTotal, medianData[simulationYears], p10Data[simulationYears], p90Data[simulationYears]);
+    
+    updateChart(years, simResult, Array.from(comparedScenarioIds).map(id => scenarios[id]));
+    updateStats(simResult.initialTotal, simResult.median[simulationYears], simResult.p10[simulationYears], simResult.p90[simulationYears]);
 }
 
-function updateChart(labels, median, p10, p90) {
+function updateChart(labels, mainResult, comparedScenarios) {
     const ctx = document.getElementById('rentChart').getContext('2d');
     
     if (chart) {
         chart.destroy();
     }
 
+    const datasets = [
+        {
+            label: 'Nykyinen (Mediaani)',
+            data: mainResult.median,
+            borderColor: '#6366f1',
+            backgroundColor: 'rgba(99, 102, 241, 0.5)',
+            borderWidth: 3,
+            tension: 0.4,
+            pointRadius: 4,
+            zIndex: 10
+        },
+        {
+            label: 'Nykyinen (90% kvantiili)',
+            data: mainResult.p90,
+            borderColor: 'rgba(239, 68, 68, 0.4)',
+            backgroundColor: 'rgba(239, 68, 68, 0.05)',
+            borderWidth: 1,
+            tension: 0.4,
+            fill: '+1',
+            pointRadius: 0
+        },
+        {
+            label: 'Nykyinen (10% kvantiili)',
+            data: mainResult.p10,
+            borderColor: 'rgba(34, 197, 94, 0.4)',
+            backgroundColor: 'rgba(34, 197, 94, 0.05)',
+            borderWidth: 1,
+            tension: 0.4,
+            fill: false,
+            pointRadius: 0
+        }
+    ];
+
+    // Add comparison lines
+    comparedScenarios.forEach((s, index) => {
+        const colors = ['#f59e0b', '#10b981', '#ec4899', '#8b5cf6'];
+        const color = colors[index % colors.length];
+        datasets.push({
+            label: s.name,
+            data: s.medianResults,
+            borderColor: color,
+            borderWidth: 2,
+            borderDash: [5, 5],
+            tension: 0.4,
+            pointRadius: 0,
+            fill: false
+        });
+    });
+
     chart = new Chart(ctx, {
         type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'Mediaani',
-                    data: median,
-                    borderColor: '#6366f1', // Indigo 500
-                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                    borderWidth: 3,
-                    tension: 0.4,
-                    pointRadius: 4
-                },
-                {
-                    label: '90% kvantiili (Korkea arvio)',
-                    data: p90,
-                    borderColor: 'rgba(239, 68, 68, 0.5)', // Red 500
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    borderWidth: 1,
-                    tension: 0.4,
-                    fill: '+1', // Fill to next dataset (creating the band)
-                    pointRadius: 0
-                },
-                {
-                    label: '10% kvantiili (Matala arvio)',
-                    data: p10,
-                    borderColor: 'rgba(34, 197, 94, 0.5)', // Green 500
-                    backgroundColor: 'rgba(34, 197, 94, 0.1)', // This color fills the gap
-                    borderWidth: 1,
-                    tension: 0.4,
-                    fill: false,
-                    pointRadius: 0
-                }
-            ]
-        },
+        data: { labels: labels, datasets: datasets },
         options: {
             responsive: true,
-            interaction: {
-                mode: 'index',
-                intersect: false,
-            },
+            interaction: { mode: 'index', intersect: false },
             plugins: {
                 title: {
                     display: true,
                     text: 'Arvioitu kuukausimaksu (Vuokra + Vesi)',
                     color: '#1e293b',
-                    font: {
-                        size: 16,
-                        family: 'Outfit'
-                    }
+                    font: { size: 16, family: 'Outfit' }
                 },
                 legend: {
-                    labels: {
-                        color: '#475569',
-                        font: { family: 'Outfit' }
-                    }
+                    labels: { color: '#475569', font: { family: 'Outfit' } }
                 },
                 tooltip: {
                     backgroundColor: 'rgba(15, 23, 42, 0.9)',
@@ -221,9 +316,7 @@ function updateChart(labels, median, p10, p90) {
                     callbacks: {
                         label: function(context) {
                             let label = context.dataset.label || '';
-                            if (label) {
-                                label += ': ';
-                            }
+                            if (label) label += ': ';
                             if (context.parsed.y !== null) {
                                 label += new Intl.NumberFormat('fi-FI', { style: 'currency', currency: 'EUR' }).format(context.parsed.y);
                             }
@@ -242,9 +335,7 @@ function updateChart(labels, median, p10, p90) {
                     ticks: { 
                         color: '#64748b',
                         font: { family: 'Outfit' },
-                        callback: function(value) {
-                            return value + ' €'; 
-                        }
+                        callback: function(value) { return value + ' €'; }
                     },
                     beginAtZero: false
                 }
@@ -265,10 +356,11 @@ function updateStats(start, endMedian, endLow, endHigh) {
         <div class="stat-card">
             <h3>Vaihteluväli (80% tn.)</h3>
             <p class="stat-range">${new Intl.NumberFormat('fi-FI', { maximumFractionDigits: 0 }).format(endLow)} € - ${new Intl.NumberFormat('fi-FI', { maximumFractionDigits: 0 }).format(endHigh)} €</p>
-            <p class="stat-desc">Suurin osa simulaatioista osuu tälle välille</p>
+            <p class="stat-desc">Nykyisillä asetuksilla</p>
         </div>
     `;
 }
 
-// Run initial simulation
+// Initial render
+renderScenarios();
 runSimulation();
