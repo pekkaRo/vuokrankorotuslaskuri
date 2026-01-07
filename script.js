@@ -58,6 +58,8 @@ const simulateBtn = document.getElementById('simulateBtn');
 const saveScenarioBtn = document.getElementById('saveScenarioBtn');
 const scenarioNameInput = document.getElementById('scenarioName');
 const scenarioList = document.getElementById('scenarioList');
+const minHikeEnabled = document.getElementById('minHikeEnabled');
+const maxHikeEnabled = document.getElementById('maxHikeEnabled');
 const initialRentInput = document.getElementById('initialRent');
 const waterFeeInput = document.getElementById('waterFee');
 const minHikeInput = document.getElementById('minHike');
@@ -91,7 +93,9 @@ function saveWorkspace() {
         initialRent: initialRentInput.value,
         waterFee: waterFeeInput.value,
         minHike: minHikeInput.value,
+        minHikeEnabled: minHikeEnabled.checked,
         maxHike: maxHikeInput.value,
+        maxHikeEnabled: maxHikeEnabled.checked,
         fixedAddition: fixedAdditionInput.value,
         startYear: startYearSelect.value,
         endYear: endYearSelect.value
@@ -106,8 +110,19 @@ function restoreWorkspace() {
             const workspace = JSON.parse(saved);
             if (workspace.initialRent) initialRentInput.value = workspace.initialRent;
             if (workspace.waterFee) waterFeeInput.value = workspace.waterFee;
+            
+            if (workspace.minHikeEnabled !== undefined) {
+                minHikeEnabled.checked = workspace.minHikeEnabled;
+                minHikeInput.disabled = !workspace.minHikeEnabled;
+            }
             if (workspace.minHike) minHikeInput.value = workspace.minHike;
+
+            if (workspace.maxHikeEnabled !== undefined) {
+                maxHikeEnabled.checked = workspace.maxHikeEnabled;
+                maxHikeInput.disabled = !workspace.maxHikeEnabled;
+            }
             if (workspace.maxHike) maxHikeInput.value = workspace.maxHike;
+
             if (workspace.fixedAddition) fixedAdditionInput.value = workspace.fixedAddition;
             if (workspace.startYear) startYearSelect.value = workspace.startYear;
             if (workspace.endYear) endYearSelect.value = workspace.endYear;
@@ -120,6 +135,15 @@ function restoreWorkspace() {
 // Event Listeners for Auto-save
 [initialRentInput, waterFeeInput, minHikeInput, maxHikeInput, fixedAdditionInput, startYearSelect, endYearSelect].forEach(el => {
     el.addEventListener('input', () => {
+        saveWorkspace();
+        runSimulation();
+    });
+});
+
+[minHikeEnabled, maxHikeEnabled].forEach(el => {
+    el.addEventListener('change', (e) => {
+        const targetId = e.target.id.replace('Enabled', '');
+        document.getElementById(targetId).disabled = !e.target.checked;
         saveWorkspace();
         runSimulation();
     });
@@ -144,8 +168,8 @@ function saveScenario() {
         name: name,
         initialRent: parseFloat(initialRentInput.value),
         waterFee: parseFloat(waterFeeInput.value) || 0,
-        minHike: parseFloat(minHikeInput.value),
-        maxHike: parseFloat(maxHikeInput.value),
+        minHike: minHikeEnabled.checked ? parseFloat(minHikeInput.value) : -Infinity,
+        maxHike: maxHikeEnabled.checked ? parseFloat(maxHikeInput.value) : Infinity,
         fixedAddition: parseFloat(fixedAdditionInput.value),
         startYear: parseInt(startYearSelect.value),
         endYear: parseInt(endYearSelect.value)
@@ -183,8 +207,25 @@ function loadScenario(id) {
     const config = scenarios[id];
     initialRentInput.value = config.initialRent;
     waterFeeInput.value = config.waterFee;
-    minHikeInput.value = config.minHike;
-    maxHikeInput.value = config.maxHike;
+    
+    if (config.minHike === -Infinity) {
+        minHikeEnabled.checked = false;
+        minHikeInput.disabled = true;
+    } else {
+        minHikeEnabled.checked = true;
+        minHikeInput.disabled = false;
+        minHikeInput.value = config.minHike;
+    }
+
+    if (config.maxHike === Infinity) {
+        maxHikeEnabled.checked = false;
+        maxHikeInput.disabled = true;
+    } else {
+        maxHikeEnabled.checked = true;
+        maxHikeInput.disabled = false;
+        maxHikeInput.value = config.maxHike;
+    }
+
     fixedAdditionInput.value = config.fixedAddition;
     startYearSelect.value = config.startYear;
     endYearSelect.value = config.endYear;
@@ -261,15 +302,24 @@ function runSimulation() {
     const config = {
         initialRent: parseFloat(initialRentInput.value),
         waterFee: parseFloat(waterFeeInput.value) || 0,
-        minHike: parseFloat(minHikeInput.value),
-        maxHike: parseFloat(maxHikeInput.value),
+        minHike: minHikeEnabled.checked ? parseFloat(minHikeInput.value) : -Infinity,
+        maxHike: maxHikeEnabled.checked ? parseFloat(maxHikeInput.value) : Infinity,
         fixedAddition: parseFloat(fixedAdditionInput.value),
         startYear: parseInt(startYearSelect.value),
         endYear: parseInt(endYearSelect.value)
     };
 
+    const baselineConfig = {
+        ...config,
+        minHike: -Infinity,
+        maxHike: Infinity,
+        fixedAddition: 0
+    };
+
     const simResult = simulate(config);
-    if (!simResult) {
+    const baselineResult = simulate(baselineConfig);
+
+    if (!simResult || !baselineResult) {
         alert("Valitulla aikavälillä ei ole dataa!");
         return;
     }
@@ -277,51 +327,90 @@ function runSimulation() {
     const simulationYears = 5;
     const years = Array.from({length: simulationYears + 1}, (_, i) => `Vuosi ${i}`);
     
-    updateChart(years, simResult, Array.from(comparedScenarioIds).map(id => scenarios[id]));
+    updateChart(years, simResult, baselineResult, Array.from(comparedScenarioIds).map(id => scenarios[id]));
     updateStats(simResult.initialTotal, simResult.median[simulationYears], simResult.p10[simulationYears], simResult.p90[simulationYears]);
 }
 
-function updateChart(labels, mainResult, comparedScenarios) {
+function updateChart(labels, mainResult, baselineResult, comparedScenarios) {
     const ctx = document.getElementById('rentChart').getContext('2d');
     
     if (chart) {
         chart.destroy();
     }
 
-    const datasets = [
-        {
-            label: 'Nykyinen (Mediaani)',
-            data: mainResult.median,
-            borderColor: '#6366f1',
-            backgroundColor: 'rgba(99, 102, 241, 0.5)',
-            borderWidth: 3,
-            tension: 0.4,
-            pointRadius: 4,
-            zIndex: 10
-        },
-        {
-            label: 'Nykyinen (90% kvantiili)',
-            data: mainResult.p90,
-            borderColor: 'rgba(239, 68, 68, 0.4)',
-            backgroundColor: 'rgba(239, 68, 68, 0.05)',
-            borderWidth: 1,
-            tension: 0.4,
-            fill: '+1',
-            pointRadius: 0
-        },
-        {
-            label: 'Nykyinen (10% kvantiili)',
-            data: mainResult.p10,
-            borderColor: 'rgba(34, 197, 94, 0.4)',
-            backgroundColor: 'rgba(34, 197, 94, 0.05)',
-            borderWidth: 1,
-            tension: 0.4,
-            fill: false,
-            pointRadius: 0
-        }
-    ];
+    const datasets = [];
 
-    // Add comparison lines
+    // 1. Baseline datasets (Lowest layer)
+    datasets.push({
+        label: 'Puhdas indeksi (10-90% vaihtelu)',
+        data: baselineResult.p90,
+        borderColor: 'rgba(148, 163, 184, 0.3)',
+        backgroundColor: 'rgba(148, 163, 184, 0.15)',
+        borderWidth: 1,
+        tension: 0.4,
+        fill: '+1',
+        pointRadius: 0,
+        borderDash: [3, 3]
+    });
+
+    datasets.push({
+        label: 'Baseline Spread Bottom',
+        data: baselineResult.p10,
+        borderColor: 'rgba(148, 163, 184, 0.3)',
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        tension: 0.4,
+        fill: false,
+        pointRadius: 0,
+        hidden: true
+    });
+
+    datasets.push({
+        label: 'Puhdas indeksi (Mediaani)',
+        data: baselineResult.median,
+        borderColor: 'rgba(71, 85, 105, 0.4)',
+        borderWidth: 1.5,
+        borderDash: [10, 5],
+        tension: 0.4,
+        fill: false,
+        pointRadius: 0
+    });
+
+    // 2. Main simulation datasets
+    datasets.push({
+        label: 'Nykyinen (Mediaani)',
+        data: mainResult.median,
+        borderColor: '#6366f1',
+        backgroundColor: 'rgba(99, 102, 241, 0.5)',
+        borderWidth: 3,
+        tension: 0.4,
+        pointRadius: 4,
+        zIndex: 10
+    });
+
+    datasets.push({
+        label: 'Nykyinen (90% kvantiili)',
+        data: mainResult.p90,
+        borderColor: 'rgba(239, 68, 68, 0.4)',
+        backgroundColor: 'rgba(239, 68, 68, 0.05)',
+        borderWidth: 1,
+        tension: 0.4,
+        fill: '+1',
+        pointRadius: 0
+    });
+
+    datasets.push({
+        label: 'Nykyinen (10% kvantiili)',
+        data: mainResult.p10,
+        borderColor: 'rgba(34, 197, 94, 0.4)',
+        backgroundColor: 'rgba(34, 197, 94, 0.05)',
+        borderWidth: 1,
+        tension: 0.4,
+        fill: false,
+        pointRadius: 0
+    });
+
+    // 3. Comparison lines
     comparedScenarios.forEach((s, index) => {
         const colors = ['#f59e0b', '#10b981', '#ec4899', '#8b5cf6'];
         const color = colors[index % colors.length];
@@ -351,7 +440,14 @@ function updateChart(labels, mainResult, comparedScenarios) {
                     font: { size: 16, family: 'Outfit' }
                 },
                 legend: {
-                    labels: { color: '#475569', font: { family: 'Outfit' } }
+                    labels: { 
+                        color: '#475569', 
+                        font: { family: 'Outfit' },
+                        filter: function(item) {
+                            // Hide the helper dataset from legend
+                            return !item.text.includes('Baseline Spread Bottom');
+                        }
+                    }
                 },
                 tooltip: {
                     backgroundColor: 'rgba(15, 23, 42, 0.9)',
@@ -360,6 +456,7 @@ function updateChart(labels, mainResult, comparedScenarios) {
                     callbacks: {
                         label: function(context) {
                             let label = context.dataset.label || '';
+                            if (label.includes('Baseline Spread Bottom')) return null;
                             if (label) label += ': ';
                             if (context.parsed.y !== null) {
                                 label += new Intl.NumberFormat('fi-FI', { style: 'currency', currency: 'EUR' }).format(context.parsed.y);
